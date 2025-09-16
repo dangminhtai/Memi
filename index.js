@@ -19,18 +19,12 @@ const client = new Client({
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.GuildMember]
 });
 
-
-
-// === 2. Tải Slash Commands từ thư mục ===
-client.commands = new Collection();
-const commands = [];
-
-function getAllCommandFiles(dirPath, arrayOfFiles = []) {
+function getAllFiles(dirPath, arrayOfFiles = []) {
     const files = fs.readdirSync(dirPath);
     for (const file of files) {
         const fullPath = path.join(dirPath, file);
         if (fs.statSync(fullPath).isDirectory()) {
-            getAllCommandFiles(fullPath, arrayOfFiles);
+            getAllFiles(fullPath, arrayOfFiles);
         } else if (file.endsWith('.js')) {
             arrayOfFiles.push(fullPath);
         }
@@ -38,8 +32,16 @@ function getAllCommandFiles(dirPath, arrayOfFiles = []) {
     return arrayOfFiles;
 }
 
+
+// === 2. Tải Slash Commands từ thư mục ===
+
+client.commands = new Collection();
+
+const commands = [];
+
+
 const { withValidation } = require('./utils/middlewares/withValidation.js');
-const commandFiles = getAllCommandFiles(path.join(__dirname, 'commands'));
+const commandFiles = getAllFiles(path.join(__dirname, 'commands'));
 
 for (const file of commandFiles) {
     try {
@@ -57,6 +59,30 @@ for (const file of commandFiles) {
         }
     } catch (err) {
         console.error(`❌ Lỗi khi load lệnh từ: ${file}`, err);
+    }
+}
+//loads buttons
+client.buttons = new Collection();
+const buttonFiles = getAllFiles(path.join(__dirname, 'events/interactions/buttons'));
+for (const file of buttonFiles) {
+    const button = require(file);
+    if ('id' in button && 'execute' in button) {
+        client.buttons.set(button.id, button);
+        console.log(`✅ Đã load button: ${button.id}`);
+    } else {
+        console.warn(`⚠️ Button thiếu "id" hoặc "execute": ${file}`);
+    }
+}
+//loads modals
+client.modals = new Collection();
+const modalFiles = getAllFiles(path.join(__dirname, 'events/interactions/modals'));
+for (const file of modalFiles) {
+    const modal = require(file);
+    if ('id' in modal && 'execute' in modal) {
+        client.modals.set(modal.id, modal);
+        console.log(`✅ Đã load modal: ${modal.id}`);
+    } else {
+        console.warn(`⚠️ Modal thiếu "id" hoặc "execute": ${file}`);
     }
 }
 

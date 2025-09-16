@@ -47,7 +47,7 @@ module.exports = {
 
         const tokenAvatar = makeToken();
         const btnAvatar = new ButtonBuilder()
-            .setCustomId(`charbtn:${char._id}:avatarUrl:${tokenAvatar}`)
+            .setCustomId(`charbtn:${char._id}:avatar:${tokenAvatar}`)
             .setLabel('Edit Avatar')
             .setStyle(ButtonStyle.Secondary);
 
