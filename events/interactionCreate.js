@@ -1,88 +1,127 @@
+// events/interactionCreate.js
+const { ModalBuilder, TextInputBuilder, ActionRowBuilder, TextInputStyle } = require('discord.js');
 const Character = require('../models/Character');
+const InteractionMessage = require('../models/InteractionMessage');
 
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
         try {
-            // 🔹 Slash commands
+            // --- Slash commands forwarding (giữ nguyên) ---
             if (interaction.isChatInputCommand()) {
                 const command = interaction.client.commands.get(interaction.commandName);
                 if (!command) return;
-
-                try {
-                    await command.execute(interaction);
-                } catch (err) {
-                    console.error(`❌ Error executing /${interaction.commandName}:`, err);
-                    if (interaction.replied || interaction.deferred) {
-                        await interaction.followUp({ content: '❌ Failed to execute command.', ephemeral: true });
-                    } else {
-                        await interaction.reply({ content: '❌ Failed to execute command.', ephemeral: true });
-                    }
-                }
-                return;
+                return command.execute(interaction);
             }
 
-            // 🔹 Modal: Character Create
-            if (interaction.isModalSubmit() && interaction.customId === 'characterCreateModal') {
-                const name = interaction.fields.getTextInputValue('charName');
-                const tagline = interaction.fields.getTextInputValue('charTagline') || '';
-                const description = interaction.fields.getTextInputValue('charDescription') || '';
+            // --- Button click ---
+            if (interaction.isButton()) {
+                // only handle charbtn: prefix
+                if (!interaction.customId.startsWith('charbtn:')) return;
 
-                try {
-                    // Validate
-                    if (!name || name.trim().length === 0) {
-                        return interaction.reply({
-                            content: '⚠️ Character name cannot be empty.',
-                            ephemeral: true,
-                        });
+                // Validate via DB
+                const record = await InteractionMessage.findOne({
+                    customId: interaction.customId,
+                    messageId: interaction.message.id
+                });
+
+                if (!record) {
+                    return interaction.reply({ content: '❌ Interaction expired or invalid.', ephemeral: true });
+                }
+                if (record.userId !== interaction.user.id) {
+                    return interaction.reply({ content: '⚠️ Bạn không có quyền bấm nút này.', ephemeral: true });
+                }
+
+                // parse: charbtn:<charId>:<field>:<token>
+                const [, charId, field /*, token*/] = interaction.customId.split(':');
+
+                // If user clicked "basic" => open modal with 3 fields
+                if (field === 'basic') {
+                    const character = await Character.findById(charId);
+                    if (!character) return interaction.reply({ content: '❌ Character not found.', ephemeral: true });
+
+                    const modal = new ModalBuilder()
+                        .setCustomId(`charmod:basic:${charId}`)
+                        .setTitle('Edit Basic Info');
+
+                    const nameInput = new TextInputBuilder()
+                        .setCustomId('charName')
+                        .setLabel('Character Name')
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true)
+                        .setValue(character.name || '');
+
+                    const taglineInput = new TextInputBuilder()
+                        .setCustomId('charTagline')
+                        .setLabel('Tagline')
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(false)
+                        .setValue(character.tagline || '');
+
+                    const descInput = new TextInputBuilder()
+                        .setCustomId('charDescription')
+                        .setLabel('Description')
+                        .setStyle(TextInputStyle.Paragraph)
+                        .setRequired(false)
+                        .setValue(character.description || '');
+
+                    modal.addComponents(
+                        new ActionRowBuilder().addComponents(nameInput),
+                        new ActionRowBuilder().addComponents(taglineInput),
+                        new ActionRowBuilder().addComponents(descInput)
+                    );
+
+                    return interaction.showModal(modal);
+                }
+
+                // handle other fields (greeting/avatar/visibility/definition) if you want later
+                return interaction.reply({ content: `⚠️ Button for "${field}" not implemented yet.`, ephemeral: true });
+            }
+
+            // --- Modal submit ---
+            if (interaction.isModalSubmit()) {
+                // modal id format: charmod:basic:<charId>
+                if (!interaction.customId.startsWith('charmod:')) return;
+
+                const parts = interaction.customId.split(':');
+                // parts: ['charmod','basic','<charId>']
+                const [, kind, charId] = parts;
+
+                if (kind === 'basic') {
+                    const name = interaction.fields.getTextInputValue('charName').trim();
+                    const tagline = interaction.fields.getTextInputValue('charTagline') || '';
+                    const description = interaction.fields.getTextInputValue('charDescription') || '';
+
+                    // basic validation
+                    if (!name) {
+                        return interaction.reply({ content: '⚠️ Name cannot be empty.', ephemeral: true });
                     }
 
-                    // Check duplicate
-                    const existing = await Character.findOne({ name, ownerId: interaction.user.id });
-                    if (existing) {
-                        return interaction.reply({
-                            content: `⚠️ You already created a character named **${name}**.`,
-                            ephemeral: true,
-                        });
+                    const character = await Character.findById(charId);
+                    if (!character) return interaction.reply({ content: '❌ Character not found.', ephemeral: true });
+
+                    // check duplicate name for this user (excluding current character)
+                    const duplicate = await Character.findOne({ ownerId: interaction.user.id, name });
+                    if (duplicate && duplicate._id.toString() !== charId) {
+                        return interaction.reply({ content: '⚠️ You already have a character with that name.', ephemeral: true });
                     }
 
-                    const character = new Character({
-                        name,
-                        tagline,
-                        description,
-                        ownerId: interaction.user.id,
-                    });
-
+                    // update fields
+                    character.name = name;
+                    character.tagline = tagline;
+                    character.description = description;
+                    character.updatedAt = new Date();
                     await character.save();
 
-                    return interaction.reply({
-                        content: `✅ Character **${name}** created successfully!`,
-                        ephemeral: true,
-                    });
-                } catch (err) {
-                    console.error('❌ Error creating character:', err);
-                    if (interaction.replied || interaction.deferred) {
-                        await interaction.followUp({ content: '❌ Failed to create character.', ephemeral: true });
-                    } else {
-                        await interaction.reply({ content: '❌ Failed to create character.', ephemeral: true });
-                    }
+                    return interaction.reply({ content: `✅ Basic info updated for **${character.name}**.`, ephemeral: true });
                 }
+
+                // other modal kinds if add later
             }
 
-            // 🔹 Button & Select Menu (placeholder)
-            if (interaction.isButton()) {
-                return interaction.reply({ content: `🔘 Button **${interaction.customId}** clicked.`, ephemeral: true });
-            }
-
-            if (interaction.isStringSelectMenu()) {
-                return interaction.reply({ content: `📋 You chose: ${interaction.values.join(', ')}`, ephemeral: true });
-            }
-
-        } catch (error) {
-            console.error('❌ Unhandled interaction error:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ content: '❌ Something went wrong handling this interaction.', ephemeral: true });
-            }
+        } catch (err) {
+            console.error('❌ interactionCreate error:', err);
+            try { if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: '❌ Something went wrong.', ephemeral: true }); } catch (e) { }
         }
-    },
+    }
 };
